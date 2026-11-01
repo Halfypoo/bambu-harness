@@ -1,0 +1,9 @@
+solid open
+  facet normal 0.000000e+0 0.000000e+0 1.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 1.000000e+1 0.000000e+0 0.000000e+0
+      vertex 0.000000e+0 1.000000e+1 0.000000e+0
+    endloop
+  endfacet
+endsolid open

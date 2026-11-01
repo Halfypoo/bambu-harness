@@ -1,0 +1,8 @@
+title = "bambu-harness"
+
+[allowlist]
+description = "Synthetic TLS fixtures for offline tests (see test/fixtures/certs/README.md)"
+paths = [
+  '''test/fixtures/certs/.*\.key''',
+  '''test/fixtures/certs/.*\.crt''',
+]

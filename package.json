@@ -1,0 +1,24 @@
+{
+  "name": "bambu-harness",
+  "version": "2.0.0",
+  "description": "Zero-dependency Node 22 CLI to slice for and drive a Bambu Lab A1 mini over the local network (LAN Only Mode).",
+  "type": "module",
+  "bin": {
+    "bambu": "src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/harness.test.js test/v2.test.js"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Halfypoo/bambu-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Halfypoo/bambu-harness/issues"
+  },
+  "homepage": "https://github.com/Halfypoo/bambu-harness#readme"
+}

@@ -1,0 +1,86 @@
+solid huge
+  facet normal 0.000000e+0 0.000000e+0 1.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 0.000000e+0
+    endloop
+  endfacet
+  facet normal 0.000000e+0 0.000000e+0 1.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 0.000000e+0
+      vertex 0.000000e+0 2.000000e+2 0.000000e+0
+    endloop
+  endfacet
+  facet normal 0.000000e+0 0.000000e+0 -1.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 2.000000e+2
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+      vertex 2.000000e+2 0.000000e+0 2.000000e+2
+    endloop
+  endfacet
+  facet normal 0.000000e+0 0.000000e+0 -1.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 2.000000e+2
+      vertex 0.000000e+0 2.000000e+2 2.000000e+2
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+    endloop
+  endfacet
+  facet normal 0.000000e+0 1.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 0.000000e+0 2.000000e+2
+      vertex 2.000000e+2 0.000000e+0 0.000000e+0
+    endloop
+  endfacet
+  facet normal 0.000000e+0 1.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 0.000000e+0 0.000000e+0 2.000000e+2
+      vertex 2.000000e+2 0.000000e+0 2.000000e+2
+    endloop
+  endfacet
+  facet normal 0.000000e+0 -1.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 2.000000e+2 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+    endloop
+  endfacet
+  facet normal 0.000000e+0 -1.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 2.000000e+2 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+      vertex 0.000000e+0 2.000000e+2 2.000000e+2
+    endloop
+  endfacet
+  facet normal 1.000000e+0 0.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 0.000000e+0 2.000000e+2 0.000000e+0
+      vertex 0.000000e+0 2.000000e+2 2.000000e+2
+    endloop
+  endfacet
+  facet normal 1.000000e+0 0.000000e+0 0.000000e+0
+    outer loop
+      vertex 0.000000e+0 0.000000e+0 0.000000e+0
+      vertex 0.000000e+0 2.000000e+2 2.000000e+2
+      vertex 0.000000e+0 0.000000e+0 2.000000e+2
+    endloop
+  endfacet
+  facet normal -1.000000e+0 0.000000e+0 0.000000e+0
+    outer loop
+      vertex 2.000000e+2 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+      vertex 2.000000e+2 2.000000e+2 0.000000e+0
+    endloop
+  endfacet
+  facet normal -1.000000e+0 0.000000e+0 0.000000e+0
+    outer loop
+      vertex 2.000000e+2 0.000000e+0 0.000000e+0
+      vertex 2.000000e+2 0.000000e+0 2.000000e+2
+      vertex 2.000000e+2 2.000000e+2 2.000000e+2
+    endloop
+  endfacet
+endsolid huge
