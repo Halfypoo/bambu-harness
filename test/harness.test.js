@@ -85,7 +85,49 @@ test("3mf inspection requires plate gcode and extracts bed target", () => {
   assert.throws(() => inspectGcode3mf(makeStoredZip({ "Metadata/foo": "x" }), 1), /plate_1/);
   assert.equal(assessModelText("Bambu Lab A1").matchesN1, false);
   assert.equal(extractBedTarget("M190 S45\n").celsius, 45);
+  assert.equal(extractBedTarget("; hot_plate_temp_initial_layer = 60\n").celsius, 60);
+  assert.equal(
+    extractBedTarget("; hot_plate_temp_initial_layer = 60\n; first_layer_bed_temperature = 35\nM190 S35\n").celsius,
+    35,
+  );
+  assert.equal(
+    extractBedTarget("<!-- ; first_layer_bed_temperature = 60 (Textured PEI Plate, PLA; matches M140/M190 S60 in plate_1.gcode) -->").celsius,
+    60,
+  );
   assert.equal(PLA_BED_MIN_C, 50);
+
+  const pad = `;${"x".repeat(4 * 1024 * 1024 + 64)}`;
+  const huge = makeStoredZip({
+    "Metadata/plate_1.gcode": [
+      "; printer_model = Bambu Lab A1 mini",
+      "; first_layer_bed_temperature = 60",
+      "; curr_bed_type = Textured PEI Plate",
+      "M140 S60",
+      "M190 S60",
+      "M211 X0 Y0 Z0",
+      "; CHANGE_LAYER",
+      "G1 X20 Y20 E0.1",
+      pad,
+    ].join("\n"),
+    "Metadata/project_settings.config": '{"printer_model":"Bambu Lab A1 mini"}',
+    "Metadata/slice_info.config": "<config><plate></plate></config>",
+  });
+  const hugeInspect = inspectGcode3mf(huge, 1);
+  assert.equal(hugeInspect.bedTargetC, 60);
+  assert.equal(hugeInspect.bedTargetSource, "first_layer_bed_temperature");
+
+  const commentOnly = makeStoredZip({
+    "Metadata/plate_1.gcode": "; printer_model = Bambu Lab A1 mini\n; CHANGE_LAYER\nG1 X20 Y20 E0.1\n",
+    "Metadata/slice_info.config":
+      "<!-- ; first_layer_bed_temperature = 60 (Textured PEI Plate, PLA; matches M140/M190 S60 in plate_1.gcode) -->\n<config/>",
+  });
+  assert.equal(inspectGcode3mf(commentOnly, 1).bedTargetC, 60);
+
+  const none = makeStoredZip({
+    "Metadata/plate_1.gcode": "; printer_model = Bambu Lab A1 mini\n; CHANGE_LAYER\nG1 X20 Y20 E0.1\n",
+    "Metadata/slice_info.config": "<config><plate></plate></config>",
+  });
+  assert.equal(inspectGcode3mf(none, 1).bedTargetC, null);
 });
 
 test("argument parser rejects secrets on the command line", () => {

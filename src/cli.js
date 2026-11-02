@@ -14,8 +14,10 @@ This tool talks to one printer on your local network. Enable LAN Only Mode and
 Developer Mode on the printer. There is no cloud login.
 
 Commands:
-  slice      Slice an STL or 3MF for the A1 mini (local OrcaSlicer).
-  lan        Talk to the printer over LAN. See subcommands below.
+  slice         Slice an STL or 3MF for the A1 mini (local OrcaSlicer).
+  check-bounds  Validate a .gcode.3mf for A1 mini bed / preflight rules (no printer contact).
+  plate         Build a multi-copy plate from a sliced .gcode.3mf (see plate build).
+  lan           Talk to the printer over LAN. See subcommands below.
 
 LAN setup:
   bambu lan configure --host <printer-ip> --serial <SERIAL>
@@ -32,7 +34,16 @@ LAN commands:
   bambu lan upload FILE.gcode.3mf [--timeout-sec N] --access-code-file FILE
   bambu lan print FILE.gcode.3mf --yes [--timeout-sec N] --access-code-file FILE
   bambu lan print FILE.gcode.3mf --yes --force --access-code-file FILE
+  bambu lan print FILE.gcode.3mf --yes --skip-bounds-check=I_UNDERSTAND_BED_CRASH_RISK --access-code-file FILE
   bambu lan stop --yes --access-code-file FILE
+  bambu check-bounds FILE.gcode.3mf
+  bambu plate info FILE.gcode.3mf
+  bambu plate build FILE.gcode.3mf --copies N --objects ID,ID --out OUT.gcode.3mf
+      [--filament-type PLA] [--nozzle-temp C] [--nozzle-temp-first-layer C]
+      [--nozzle-range-low C] [--nozzle-range-high C]
+      [--bed-temp C] [--fan 0-100] [--bridge-fan 0-100]
+      [--layout center|front] [--colour #RRGGBB]
+  bambu plate check FILE.gcode.3mf
   bambu lan diagnose --access-code-file FILE
   bambu lan calibrate bed-level|vibration|flow [--yes]
   bambu lan temperature nozzle|bed CELSIUS --yes
@@ -47,6 +58,9 @@ Options:
 
 Notes:
   Remote FTPS names may contain spaces; quote them in the shell.
+  lan print runs a bed-bounds / preflight check before upload (all XY travels after
+  start G-code must stay in 0..180; stock start/end purge may use the brush/park envelope).
+  Override only with --skip-bounds-check=I_UNDERSTAND_BED_CRASH_RISK (deliberately loud).
   lan print refuses a sliced first-layer bed target below ~50C (PLA) unless --force.
   Missing or unknown bed temperature is refused unless --force.
   --auto-stop requires --yes (it can stop a print).

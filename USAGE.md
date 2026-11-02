@@ -40,7 +40,27 @@ If `lan print` reports an MQTT puback timeout, run `lan status` before retrying 
 
 `lan print` refuses a sliced first-layer bed below about 50°C unless `--force`. A missing or unreadable bed temperature is treated as unknown and is also refused unless `--force`.
 
+`lan print` runs preflight/bed-bounds before upload (all XY travels after start G-code must stay in 0..180 on an A1 mini). Check a file without printing:
+
+```bash
+node src/cli.js check-bounds model.gcode.3mf
+```
+
+Override only with `--skip-bounds-check=I_UNDERSTAND_BED_CRASH_RISK`.
+
 `lan watch-first-layer --auto-stop` requires `--yes` (it can stop a print).
+
+## Making plates safely
+
+```bash
+node src/cli.js plate info source.gcode.3mf
+node src/cli.js plate build source.gcode.3mf --objects 278,318 --copies 4 --gap 4 --margin 5 \
+  --filament-type PLA --nozzle-temp 215 --nozzle-temp-first-layer 220 --bed-temp 60 --fan 100 \
+  --out plate.gcode.3mf
+node src/cli.js check-bounds plate.gcode.3mf   # exit 4 + ok:false if refused
+```
+
+The plate builder is Node (same as the rest of this repo). It strips each copy’s pre-extrusion travel-in waypoint and travels to the **start** of the first extruding move (critical for G2/G3 arcs), shelf-packs part bboxes with gap≥4 and margin≥5 (`--layout center` by default, `--layout front` to pin the pack to the front margin), rewrites **actual** `M104`/`M109`/`M140`/`M190`/`M106` commands (not just comments), rewrites filament header fields (type, nozzle range, nozzle/bed/plate temperatures) to the target filament, writes a `first_layer_bed_temperature` note into `slice_info.config`, sets PLA `tray_info_idx` to `GFA00` and colour to `#FFFFFF` unless `--colour` is set, recomputes time/weight metadata for N copies, emits distinct `M624`/`M625` labels per tiled copy, updates bed levelling bounds, and refuses to write a plate that fails preflight. Stock start `M211 X0 Y0 Z0` disables firmware limits — preflight is the bed-crash guard after that. Preflight hard-fails when print-phase nozzle commands disagree with `; nozzle_temperature` / first-layer settings or the filament range. A header nozzle range that sits outside the declared filament’s built-in band (PLA 190–240, PETG 230–270, PLA-silk 190–240, ABS 240–280, TPU 200–250) is ignored in favor of that band. `--nozzle-range-low` and `--nozzle-range-high` override the written window.
 
 ## Slice
 

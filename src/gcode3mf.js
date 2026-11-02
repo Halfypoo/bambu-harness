@@ -55,9 +55,16 @@ export function listZip(buf) {
   return entries;
 }
 
+export function plateGcodePath(plate = 1) {
+  return `Metadata/plate_${Number(plate)}.gcode`;
+}
+
+export function findZipEntry(buf, name) {
+  return listZip(buf).find((item) => item.name === name) ?? null;
+}
+
 export function readZipEntry(buf, name, maxBytes = LIMITS.maxZipEntryBytes) {
-  const entries = listZip(buf);
-  const entry = entries.find((item) => item.name === name);
+  const entry = findZipEntry(buf, name);
   if (!entry) return null;
   if (entry.uncompSize > maxBytes) {
     fail(`zip entry too large to inspect: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
@@ -65,10 +72,8 @@ export function readZipEntry(buf, name, maxBytes = LIMITS.maxZipEntryBytes) {
   return entryBytes(buf, entry, maxBytes);
 }
 
-function entryBytes(buf, entry, maxBytes = LIMITS.maxZipEntryBytes) {
-  if (entry.uncompSize > maxBytes) {
-    fail(`zip entry too large to inspect: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
-  }
+/** Raw local-file payload (still compressed when method is 8). */
+export function zipEntryCompressedBytes(buf, entry) {
   if (entry.localOffset + 30 > buf.length || buf.readUInt32LE(entry.localOffset) !== LOCAL) {
     fail(`zip local header missing: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
   }
@@ -77,16 +82,94 @@ function entryBytes(buf, entry, maxBytes = LIMITS.maxZipEntryBytes) {
   const start = entry.localOffset + 30 + nameLen + extraLen;
   const end = start + entry.compSize;
   if (end > buf.length) fail(`zip entry truncated: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
-  const compressed = buf.subarray(start, end);
-  if (entry.method === 0) return compressed;
-  if (entry.method === 8) {
-    const inflated = zlib.inflateRawSync(compressed);
-    if (inflated.length !== entry.uncompSize && entry.uncompSize !== 0) {
-      fail(`zip inflation size mismatch: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
-    }
-    return inflated;
+  return buf.subarray(start, end);
+}
+
+function entryBytes(buf, entry, maxBytes = LIMITS.maxZipEntryBytes) {
+  if (entry.uncompSize > maxBytes) {
+    fail(`zip entry too large to inspect: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
   }
+  const compressed = zipEntryCompressedBytes(buf, entry);
+  if (entry.method === 0) return compressed;
+  if (entry.method === 8) return inflateCapped(compressed, entry, maxBytes);
   fail(`unsupported zip compression method ${entry.method} in ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
+}
+
+function inflateCapped(compressed, entry, maxBytes) {
+  // A declared size of 0 with a real payload is the data-descriptor / zip-bomb shape.
+  if (entry.uncompSize === 0 && compressed.length > 0) {
+    fail(`zip entry ${entry.name} declares 0 bytes but has a payload`, { exitCode: 4, code: "bad_3mf" });
+  }
+  let inflated;
+  try {
+    inflated = zlib.inflateRawSync(compressed, { maxOutputLength: maxBytes });
+  } catch {
+    fail(`zip entry ${entry.name} is corrupt or exceeds ${maxBytes} bytes inflated`, { exitCode: 4, code: "bad_3mf" });
+  }
+  if (inflated.length > maxBytes) {
+    fail(`zip entry too large to inspect: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
+  }
+  if (entry.uncompSize !== 0 && inflated.length !== entry.uncompSize) {
+    fail(`zip inflation size mismatch: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
+  }
+  return inflated;
+}
+
+/**
+ * Stream an entry as UTF-8 lines without requiring the usual 4 MiB inspect cap.
+ * G-code is ASCII; chunk decoding is safe. Returns false when the entry is missing.
+ */
+export function forEachZipEntryLine(buf, name, onLine, { maxBytes = LIMITS.maxPlateGcodeBytes } = {}) {
+  const entry = findZipEntry(buf, name);
+  if (!entry) return false;
+  if (entry.uncompSize > maxBytes) {
+    fail(`zip entry too large to stream: ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
+  }
+  const compressed = zipEntryCompressedBytes(buf, entry);
+  let data;
+  if (entry.method === 0) data = compressed;
+  else if (entry.method === 8) data = inflateCapped(compressed, entry, maxBytes);
+  else fail(`unsupported zip compression method ${entry.method} in ${entry.name}`, { exitCode: 4, code: "bad_3mf" });
+  const chunkSize = 256 * 1024;
+  let carry = "";
+  let lineNo = 0;
+  for (let offset = 0; offset < data.length; offset += chunkSize) {
+    const piece = data.subarray(offset, offset + chunkSize).toString("utf8");
+    const parts = (carry + piece).split(/\r\n|\n|\r/);
+    carry = parts.pop();
+    for (const line of parts) {
+      lineNo += 1;
+      if (onLine(line, lineNo) === false) return true;
+    }
+  }
+  if (carry.length || data.length === 0) {
+    lineNo += 1;
+    if (onLine(carry, lineNo) === false) return true;
+  }
+  return true;
+}
+
+/**
+ * Header plus the first printed layer. Stops there so a multi-megabyte plate
+ * is not skipped by the 4 MiB inspect cap (bed temp often sits past 32 KiB).
+ */
+export function readPlatePreamble(buf, name) {
+  let text = "";
+  let seenLayer = false;
+  let after = 0;
+  const found = forEachZipEntryLine(buf, name, (line) => {
+    const next = `${line}\n`;
+    if (text.length + next.length > 1_500_000) return false;
+    text += next;
+    if (/^;\s*CHANGE_LAYER\s*$/.test(line)) {
+      if (seenLayer) return false;
+      seenLayer = true;
+    } else if (seenLayer) {
+      after += 1;
+      if (after >= 400) return false;
+    }
+  });
+  return found ? text : "";
 }
 
 export function assessModelText(text) {
@@ -118,12 +201,16 @@ export function extractBedTarget(text) {
     return { celsius: Number(firstLayer[1]), source: "first_layer_bed_temperature" };
   }
   const m190 = /\bM190\s+S(-?\d+(?:\.\d+)?)/i.exec(source);
-  if (m190) {
+  if (m190 && Number(m190[1]) > 0) {
     return { celsius: Number(m190[1]), source: "M190" };
   }
   const m140 = /\bM140\s+S(-?\d+(?:\.\d+)?)/i.exec(source);
-  if (m140) {
+  if (m140 && Number(m140[1]) > 0) {
     return { celsius: Number(m140[1]), source: "M140" };
+  }
+  const hot = /;\s*hot_plate_temp_initial_layer\s*=\s*(-?\d+(?:\.\d+)?)/i.exec(source);
+  if (hot && Number(hot[1]) > 0) {
+    return { celsius: Number(hot[1]), source: "hot_plate_temp_initial_layer" };
   }
   return { celsius: null, source: null };
 }
@@ -153,12 +240,8 @@ export function inspectGcode3mf(buf, plate = 1) {
     if (entry.uncompSize > LIMITS.maxZipEntryBytes) continue;
     chunks.push(entryBytes(buf, entry).toString("utf8"));
   }
-  let gcodeHead = "";
-  if (plateEntry.uncompSize <= LIMITS.maxZipEntryBytes) {
-    const gcode = entryBytes(buf, plateEntry).toString("utf8");
-    gcodeHead = gcode.slice(0, 32_768);
-    chunks.push(gcodeHead);
-  }
+  const preamble = readPlatePreamble(buf, platePath);
+  chunks.push(preamble);
   const joined = chunks.join("\n");
   const assessment = assessModelText(joined);
   const warnings = [];
@@ -168,8 +251,11 @@ export function inspectGcode3mf(buf, plate = 1) {
   } else if (assessment.otherModels.length) {
     warnings.push(`file mentions N1/A1 mini and also ${assessment.otherModels.join(", ")}. Confirm the plate before printing.`);
   }
-  const bedTarget = extractBedTarget(gcodeHead || joined);
-  const bedType = extractBedType(gcodeHead || joined);
+  const sliceText = chunks.find((chunk) => chunk.includes("<config")) || "";
+  const fromGcode = extractBedTarget(preamble);
+  const fromSlice = extractBedTarget(sliceText);
+  const bedTarget = fromGcode.celsius != null ? fromGcode : fromSlice;
+  const bedType = extractBedType(preamble) || extractBedType(sliceText);
   return {
     platePath,
     entryCount: entries.length,

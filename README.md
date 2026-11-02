@@ -107,6 +107,46 @@ FTPS `lan get` / `lan upload` / `lan print` (upload phase) use an **idle** data 
 
 `lan print` refuses a sliced first-layer bed target below about **50°C** (typical PLA on a warm plate) unless you pass `--force`. A missing or unreadable bed temperature is treated as **unknown** and is also refused unless you pass `--force`. Confirm plate type and bed temperature match the physical plate.
 
+`lan print` also runs a **bed-bounds / preflight** check before upload. After the start G-code, every `G0`/`G1`/`G2`/`G3` move (travels included) must stay inside the A1 mini bed (0..180 mm). Stock start/end wipe and mid-print timelapse/`SKIPPABLE` parks are whitelisted. Override only with `--skip-bounds-check=I_UNDERSTAND_BED_CRASH_RISK`.
+
+### Making plates safely
+
+Do **not** hand-shift copied toolpaths with ad-hoc scripts that offset every `X`/`Y`, including each part’s pre-extrusion “travel in” waypoint. That is how a 4-pair plate produced Y≈213 mm travels (bed is 180 mm) while `M211` had software limits off — the bed slammed its stop at full speed.
+
+Stock A1 mini start G-code runs `M211 X0 Y0 Z0` (firmware soft endstops OFF). After start, **this harness bed-bounds check is the only guard**. Preflight hard-refuses any non-stock `M211` or any `M211` after the start section.
+
+Use the in-repo plate builder (Node, zero extra deps — same language as the harness):
+
+```bash
+# List object ids / names / bboxes in a sliced plate
+node src/cli.js plate info source.gcode.3mf
+
+# Build N copies of selected objects (shelf-packs by bounding box; gap≥4, margin≥5)
+node src/cli.js plate build source.gcode.3mf --objects 278,318 --copies 4 --gap 4 --margin 5 \
+  --filament-type PLA --nozzle-temp 215 --nozzle-temp-first-layer 220 --bed-temp 60 --fan 100 \
+  --out plate.gcode.3mf
+node src/cli.js check-bounds plate.gcode.3mf
+node src/cli.js lan print plate.gcode.3mf --yes --access-code-file FILE
+```
+
+Example for a Gyro2 tread slice (cones A/B are typically ids **278** and **318**):
+
+```bash
+node src/cli.js plate info gyro2-tread.3mf
+node src/cli.js plate build gyro2-tread.3mf --objects 278,318 --copies 4 --gap 4 --margin 5 \
+  --filament-type PLA --nozzle-temp 215 --nozzle-temp-first-layer 220 --bed-temp 60 --fan 100 \
+  --out spiral-pairs-x4.gcode.3mf
+node src/cli.js check-bounds spiral-pairs-x4.gcode.3mf
+```
+
+Rules:
+
+- Every plate must pass `check-bounds` / preflight before printing (also enforced by `lan print`). Exit code **4** and JSON `ok: false` on refusal.
+- Gaps between parts ≥ 4 mm; bed margin ≥ 5 mm. Layout uses shelf/bin packing of each part’s bounding box (not a uniform max-cell grid) so 4 A+B pairs can fit when geometrically possible; otherwise it reports exactly how much X/Y is missing. `--layout center` (the default) centres a 2-pair plate on the bed; `--layout front` keeps the pack against the front margin. A plate-json bbox that disagrees with the extruded area (skirt, brim, prime line) is a warning. Extrusion outside the bed, and a per-object bbox outside the bed, stay hard errors.
+- `--objects id,id` selects which source parts to tile (default: all). Use `plate info` to list ids.
+- The builder drops each copy’s lead-in travel waypoints and inserts one clean move to the **start** of the first extruding move (so G2/G3 I/J arcs keep their geometry), limits `G29` to the occupied area, and refuses to write a file that fails preflight. It does **not** silently clamp travels — the validator decides.
+- Filament retarget rewrites real G-code commands (not just comments): `--filament-type`, `--nozzle-temp`, `--nozzle-temp-first-layer`, `--bed-temp`, `--fan` (0–100%), `--bridge-fan`. It also rewrites filament header fields (`filament_type`, nozzle range low/high, nozzle and bed/plate temperatures, volumetric speed) to the target filament. Defaults are PLA 190–240°C, PLA-silk 190–240°C, PETG 230–270°C, ABS 240–280°C, TPU 200–250°C, overridable with `--nozzle-range-low` / `--nozzle-range-high`. Preflight uses that built-in band when the header range sits outside it, and hard-fails nozzle command vs settings/range mismatches.
+
 ### `lan print` and MQTT puback timeouts
 
 After upload, `lan print` sends a local MQTT `project_file` command. The printer may start the job even if the MQTT **puback** times out. When that happens the CLI reports it clearly (and may confirm via `lan status`). **Do not retry** the same start until you have checked status — use `lan status` first. Successful print responses include `doNotRetry: true` for the same reason.
@@ -139,6 +179,7 @@ node src/cli.js slice model.stl --layer 0.2 --infill 15 --filament PLA --out mod
 - Prefer `lan status` / `lan diagnose` before retrying a print.
 - Cap (client-side): nozzle ≤ 260°C, bed ≤ 80°C, part fan PWM 0–255.
 - Print file must be `.gcode.3mf` with `Metadata/plate_N.gcode`, ≤ 100 MiB.
+- Every plate must pass the bed-bounds check (travels included) before printing; see **Making plates safely**.
 - LAN host must be one RFC1918 address in `lan.json`. There is no discovery or scan.
 - Do not set `BAMBU_HARNESS_TEST` on a machine that talks to a real printer.
 - Override the config directory only with an absolute `BAMBU_HARNESS_HOME`.
