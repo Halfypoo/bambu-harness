@@ -23,6 +23,7 @@ import { startMqttMock } from "./support/mock.js";
 import { startFakeCamera, tinyJpeg } from "./support/fake-camera.js";
 import { getFtps, uploadFtps } from "../src/ftps.js";
 import { startFakeFtps } from "./support/fake-ftps.js";
+import { syntheticPlateZip } from "./support/synthetic-plate.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
@@ -66,9 +67,11 @@ function runCli(args, env, home) {
 }
 
 function plateFile(modelText = "Bambu Lab A1 mini", bedC = 60) {
-  return makeStoredZip({
-    "Metadata/plate_1.gcode": `; header\n; first_layer_bed_temperature = ${bedC}\n; curr_bed_type = Textured PEI Plate\nG1 X10 Y10 E0.02\n`,
-    "Metadata/project_settings.config": modelText,
+  return syntheticPlateZip({
+    bedC,
+    projectSettings: typeof modelText === "string" && modelText.includes("{")
+      ? modelText
+      : JSON.stringify({ printer_model: modelText }),
   });
 }
 
@@ -403,9 +406,25 @@ test("lan print refuses a missing bed temperature unless --force", async () => {
   const unknown = path.join(home, "unknown-bed.gcode.3mf");
   await writeFile(
     unknown,
-    makeStoredZip({
-      "Metadata/plate_1.gcode": "; header\n; curr_bed_type = Textured PEI Plate\nG1 X10 Y10 E0.02\n",
-      "Metadata/project_settings.config": "Bambu Lab A1 mini",
+    syntheticPlateZip({
+      gcode: [
+        "; printer_model = Bambu Lab A1 mini",
+        "; nozzle_diameter = 0.4",
+        "; filament_type = PLA",
+        "; curr_bed_type = Textured PEI Plate",
+        "; filament used [g] = 1.00",
+        "G90",
+        "M83",
+        "; CHANGE_LAYER",
+        "; Z_HEIGHT: 0.2",
+        "G1 X20 Y20 Z0.2 E0.02",
+        "G1 X40 Y20 E0.02",
+        "G1 X40 Y40 E0.02",
+        "G1 X20 Y40 E0.02",
+        "; filament end gcode",
+        "",
+      ].join("\n"),
+      weightG: 1,
     }),
   );
   const codeFile = path.join(home, "access-code");

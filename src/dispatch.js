@@ -1,11 +1,15 @@
+import fs from "node:fs";
 import path from "node:path";
 import { testModeEnabled } from "./allow.js";
 import { assertWholeNumber } from "./a1mini.js";
+import { parseSkipBoundsCheck } from "./bed-bounds.js";
 import { grabFrame, writeFrameFile, CAMERA_SOURCES } from "./camera.js";
 import { summarizeDiagnosis } from "./diagnose.js";
 import { fail, HarnessError } from "./errors.js";
 import { getFtps, listFtps, uploadFtps } from "./ftps.js";
 import { assertLanHost, lanPort, loadLanConfig, readAccessCode, saveLanConfig } from "./lan-config.js";
+import { buildPlateFromFile, listPlateObjectsFromFile } from "./plate-builder.js";
+import { assertPreflightOrFail, validatePrintPreflight } from "./preflight.js";
 import {
   controlBody,
   extractStatus,
@@ -329,6 +333,12 @@ async function runLan(positionals, options, flags, timeout, transferTimeout) {
     }
     const plate = plateIndex(options.plate);
     const loaded = loadPrintFile(file, plate);
+    const skipBounds = parseSkipBoundsCheck(options);
+    // Upload and print both go through preflight. A file that only gets uploaded can still
+    // be started from the printer panel, and that path never comes back through this check.
+    const model = options.model || "a1-mini";
+    const checked = validatePrintPreflight(loaded.buf, { plate, model });
+    const preflight = assertPreflightOrFail(checked, { skipped: skipBounds });
     const forcedBed = sub === "print" ? assertPlaBedTarget(loaded.inspection, flags) : null;
     const remoteName = path.basename(loaded.path);
     const config = loadLanConfig();
@@ -400,9 +410,21 @@ async function runLan(positionals, options, flags, timeout, transferTimeout) {
         vibrationCali: flagsParsed.vibrationCali,
         layerInspect: flagsParsed.layerInspect,
         timelapse: flagsParsed.timelapse,
-        warnings: loaded.inspection.warnings,
+        warnings: [
+          ...loaded.inspection.warnings,
+          ...(preflight?.warning ? [preflight.warning] : []),
+          ...((preflight?.warnings || []).map((w) => w.message || w.note || String(w.code || "warning"))),
+        ],
         bedNote,
         forcedBed,
+        preflight: preflight
+          ? {
+              skipped: Boolean(preflight.skipped),
+              ok: preflight.ok !== false && !preflight.skipped ? true : preflight.ok ?? null,
+              moveCount: preflight.moveCount ?? null,
+              warningCount: preflight.warnings?.length ?? 0,
+            }
+          : null,
         doNotRetry: true,
         pin: mqtt.lanPin,
         ...ack,
@@ -480,9 +502,182 @@ async function runLan(positionals, options, flags, timeout, transferTimeout) {
   );
 }
 
+function runCheckBounds(positionals, options) {
+  const file = positionals[1];
+  if (!file) fail("check-bounds requires a .gcode.3mf path", { exitCode: 4, code: "bad_args" });
+  const plate = plateIndex(options.plate);
+  const model = options.model || "a1-mini";
+  const resolved = path.resolve(file);
+  const stat = fs.lstatSync(resolved);
+  if (stat.isSymbolicLink() || !stat.isFile()) fail("check-bounds file must be a regular file", { exitCode: 4, code: "bad_file" });
+  const buf = fs.readFileSync(resolved);
+  const result = validatePrintPreflight(buf, { plate, model });
+  return {
+    ok: result.ok,
+    command: "check-bounds",
+    file: resolved,
+    plate: result.platePath,
+    model: result.model,
+    moveCount: result.moveCount,
+    bedTargetC: result.bedTargetC,
+    errorCount: result.errors.length,
+    warningCount: result.warnings.length,
+    errors: result.errors,
+    warnings: result.warnings,
+    extrusion: result.extrusion,
+    md5: result.md5,
+    acknowledgement: result.ok ? "ok" : "failed",
+  };
+}
+
+function runPlate(positionals, options, flags) {
+  const sub = positionals[1] || "build";
+  if (sub === "check" || sub === "check-bounds") {
+    const payload = runCheckBounds(["check-bounds", positionals[2]], options);
+    if (!payload.ok) {
+      fail(payload.errors[0]?.message || "check-bounds failed", {
+        exitCode: 4,
+        code: payload.errors[0]?.code || "preflight",
+        details: payload,
+      });
+    }
+    return payload;
+  }
+  if (sub === "info" || flags?.has("list-objects")) {
+    const file = sub === "info" ? positionals[2] : positionals[1] === "build" ? null : positionals[2];
+    const infoFile = positionals[2] || positionals[1];
+    if (!infoFile || infoFile === "info" || infoFile === "build") {
+      fail("plate info requires a source .gcode.3mf", { exitCode: 4, code: "bad_args" });
+    }
+    void file;
+    const listed = listPlateObjectsFromFile(infoFile, { plate: plateIndex(options.plate) });
+    return {
+      ok: true,
+      command: "plate-info",
+      file: listed.file,
+      objects: listed.objects,
+      acknowledgement: "ok",
+    };
+  }
+  if (sub !== "build") {
+    fail("plate requires build, check, or info", { exitCode: 4, code: "bad_args" });
+  }
+  const file = positionals[2];
+  if (!file) fail("plate build requires a source .gcode.3mf", { exitCode: 4, code: "bad_args" });
+  if (!options.out) fail("plate build requires --out FILE.gcode.3mf", { exitCode: 4, code: "bad_args" });
+  const copies = options.copies === undefined ? 1 : assertWholeNumber(options.copies, "--copies", 1, 64);
+  const gapMm = options.gap === undefined ? 4 : Number(options.gap);
+  const marginMm = options.margin === undefined ? 5 : Number(options.margin);
+  const liftMm = options.lift === undefined ? 0.6 : Number(options.lift);
+  if (!Number.isFinite(gapMm) || gapMm < 4) fail("--gap must be >= 4", { exitCode: 4, code: "bad_args" });
+  if (!Number.isFinite(marginMm) || marginMm < 5) fail("--margin must be >= 5", { exitCode: 4, code: "bad_args" });
+  if (!Number.isFinite(liftMm) || liftMm < 0 || liftMm > 5) fail("--lift must be from 0 to 5", { exitCode: 4, code: "bad_args" });
+  const layout = options.layout === undefined ? "center" : String(options.layout).trim().toLowerCase();
+  if (layout !== "center" && layout !== "front") {
+    fail("--layout must be center or front", { exitCode: 4, code: "bad_args" });
+  }
+  const colourRaw = options.colour ?? options.color;
+  if (colourRaw !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(String(colourRaw))) {
+    fail("--colour must be a hex colour like #FFFFFF", { exitCode: 4, code: "bad_args" });
+  }
+  const filament = {};
+  if (options["filament-type"]) filament.type = options["filament-type"];
+  if (colourRaw !== undefined) filament.colour = String(colourRaw).toUpperCase();
+  if (options["nozzle-temp"] !== undefined) {
+    filament.nozzleC = assertWholeNumber(options["nozzle-temp"], "--nozzle-temp", 0, 300);
+  }
+  if (options["nozzle-temp-first-layer"] !== undefined) {
+    filament.firstLayerC = assertWholeNumber(
+      options["nozzle-temp-first-layer"],
+      "--nozzle-temp-first-layer",
+      0,
+      300,
+    );
+  }
+  if (options["bed-temp"] !== undefined) filament.bedC = assertWholeNumber(options["bed-temp"], "--bed-temp", 0, 120);
+  if (options["nozzle-range-low"] !== undefined) {
+    filament.rangeLow = assertWholeNumber(options["nozzle-range-low"], "--nozzle-range-low", 0, 400);
+  }
+  if (options["nozzle-range-high"] !== undefined) {
+    filament.rangeHigh = assertWholeNumber(options["nozzle-range-high"], "--nozzle-range-high", 0, 400);
+  }
+  if (
+    filament.rangeLow != null
+    && filament.rangeHigh != null
+    && filament.rangeLow > filament.rangeHigh
+  ) {
+    fail("--nozzle-range-low must be <= --nozzle-range-high", { exitCode: 4, code: "bad_args" });
+  }
+  // --fan / --bridge-fan are 0..100 percent (PWM = pct/100*255). Values 101..255 accepted as raw PWM.
+  if (options.fan !== undefined) {
+    const fan = assertWholeNumber(options.fan, "--fan", 0, 255);
+    if (fan <= 100) filament.fanPercent = fan;
+    else filament.fan = fan;
+  }
+  if (options["bridge-fan"] !== undefined) {
+    const bridge = assertWholeNumber(options["bridge-fan"], "--bridge-fan", 0, 255);
+    if (bridge <= 100) filament.bridgeFanPercent = bridge;
+    else filament.bridgeFan = bridge;
+  }
+  const built = buildPlateFromFile(file, options.out, {
+    copies,
+    gapMm,
+    marginMm,
+    liftMm,
+    plate: plateIndex(options.plate),
+    objects: options.objects,
+    layout,
+    filament: Object.keys(filament).length ? filament : null,
+  });
+  return {
+    ok: true,
+    command: "plate-build",
+    input: built.input,
+    output: built.output,
+    copies,
+    objects: built.objects,
+    gapMm,
+    marginMm,
+    placements: built.placements,
+    levelArea: built.levelArea,
+    md5: built.md5,
+    gcodeBytes: built.gcodeBytes,
+    preflightWarnings: built.preflight.warnings,
+    acknowledgement: "ok",
+  };
+}
+
 export async function dispatch({ command, positionals, options, flags, timeout, transferTimeout }) {
   if (command === "slice") {
     return { payload: await runSlice({ modelPath: positionals[1], options, flags }) };
+  }
+  if (command === "check-bounds") {
+    const payload = runCheckBounds(positionals, options);
+    if (!payload.ok) {
+      fail(payload.errors[0]?.message || "check-bounds failed", {
+        exitCode: 4,
+        code: payload.errors[0]?.code || "preflight",
+        details: payload,
+      });
+    }
+    return { payload };
+  }
+  if (command === "plate") {
+    if (flags.has("list-objects") && (positionals[1] === undefined || positionals[1].endsWith(".gcode.3mf") || positionals[1].endsWith(".3mf"))) {
+      const file = positionals[1];
+      if (!file) fail("plate --list-objects requires a source .gcode.3mf", { exitCode: 4, code: "bad_args" });
+      const listed = listPlateObjectsFromFile(file, { plate: plateIndex(options.plate) });
+      return {
+        payload: {
+          ok: true,
+          command: "plate-info",
+          file: listed.file,
+          objects: listed.objects,
+          acknowledgement: "ok",
+        },
+      };
+    }
+    return { payload: runPlate(positionals, options, flags) };
   }
   if (command === "lan") {
     if (options.host !== undefined && positionals[1] !== "configure") {

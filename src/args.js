@@ -16,6 +16,24 @@ const VALUE_OPTIONS = new Set([
   "minutes",
   "seconds",
   "access-code-file",
+  "skip-bounds-check",
+  "copies",
+  "gap",
+  "margin",
+  "lift",
+  "model",
+  "filament-type",
+  "nozzle-temp",
+  "nozzle-temp-first-layer",
+  "nozzle-range-low",
+  "nozzle-range-high",
+  "bed-temp",
+  "fan",
+  "bridge-fan",
+  "objects",
+  "layout",
+  "colour",
+  "color",
 ]);
 
 const BOOLEAN_OPTIONS = new Set([
@@ -39,6 +57,7 @@ const BOOLEAN_OPTIONS = new Set([
   "print-plan",
   "auto-stop",
   "accept-new-pin",
+  "list-objects",
 ]);
 
 const FORBIDDEN = new Set(["password", "code", "token", "access-token", "refresh-token", "access-code"]);

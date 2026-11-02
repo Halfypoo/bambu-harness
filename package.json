@@ -10,7 +10,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/harness.test.js test/v2.test.js"
+    "test": "node --test --test-concurrency=1 test/harness.test.js test/v2.test.js test/bed-bounds.test.js"
   },
   "license": "MIT",
   "repository": {
